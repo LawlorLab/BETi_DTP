@@ -1,11 +1,13 @@
 
 #Script to create venn diagram to check overlap between upregulated and downregulated genes between the 3 celllines for 3 days, BETi vs DMSO.
+#Author: Neerja Katiyar
 
 library(dplyr)
 library(tidyverse)
 library(ggVennDiagram)
 library(ggplot2)
 
+#Read the DE tables
 A673_DE_3days <- read.csv("../lawlorlab_shireen_2023.07.12_bulk_rnaseq_count_nf/additional_results/Results_A673_3days_BETI_vs_DMSO/A673_condition_treated_results.csv", row.names=1)
 CHLA10_DE_3days <- read.csv("../lawlorlab_shireen_2023.07.12_bulk_rnaseq_count_nf/additional_results/Results_CHLA10_3days_BETI_vs_DMSO/CHLA10_condition_treated_results.csv",row.names=1)
 TC32_DE_3days <- read.csv("../lawlorlab_shireen_2023.07.13_bulk_rnaseq_tc32_count_nf/additional_results/Results_TC32_3days_BETI_vs_DMSO/TC32_condition_treated_results.csv",row.names=1)
