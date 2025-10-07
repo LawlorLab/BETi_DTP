@@ -1,0 +1,141 @@
+---
+title: "figs4c-d"
+output: html_document
+# Written by Jonah Valenti, Emma Wrenn and Neerja Katiyar
+---
+
+```{r, message=FALSE}
+#load packages
+library(fgsea)
+library(data.table)
+library(ggplot2)
+library(clusterProfiler)
+library(msigdbr)
+library(org.Hs.eg.db)
+library(magrittr)
+library(dplyr)
+library(enrichplot)
+library(here)
+library(ReactomePA)
+library(msigdbr)
+library(tidyverse)
+library(svglite)
+```
+
+
+## Set WD
+```{r set wd}
+#Set wd, use here package to use relative paths rather than absolute paths
+here::i_am("./figs4c-d.Rmd")
+here()
+
+```
+
+```{r}#
+# Set figure outputs, save svg png and pdf
+knitr::opts_chunk$set(dpi=300,
+                      echo=TRUE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(dev.args=list(bg="transparent"))
+knitr::opts_chunk$set(fig.path = here("figs/dotplots"),  dev = c("svglite", "png", "pdf"))
+```
+
+
+```{r}
+A673_20v3 <- read.csv(here("../Contrasts_BETi/3Dv20D_contrasts/A673_20d_v_3d_results.csv"))
+CHLA10_20v3 <- read.csv(here("../Contrasts_BETi/3Dv20D_contrasts/CHLA10_20d_v_3d_results.csv"))
+```
+
+
+```{r}
+reactome_sets <- msigdbr(species = "Homo sapiens", category = "C2", subcollection = "CP:REACTOME") %>% 
+  dplyr::select(gs_name, ensembl_gene)
+hallmark_sets <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+  dplyr::select(gs_name, ensembl_gene)
+
+
+```
+
+
+```{r}
+# compile genes
+A673_20v3_upreg <- A673_20v3 %>% filter(log2FoldChange > 0, padj < 0.05) %>% select(ensemble.ID)
+CHLA10_20v3_upreg <- CHLA10_20v3 %>% filter(log2FoldChange > 0, padj < 0.05) %>% select(X) # column name differs in source data
+
+A673_20v3_downreg <- A673_20v3 %>% filter(log2FoldChange < 0, padj < 0.05) %>% select(ensemble.ID)
+CHLA10_20v3_downreg <- CHLA10_20v3 %>% filter(log2FoldChange < 0, padj < 0.05) %>% select(X)
+
+```
+
+
+```{r}
+# find terms enriched in hallmark and reactome gene sets
+A673_H_upreg <- enricher(A673_20v3_upreg$ensemble.ID, TERM2GENE=hallmark_sets)
+A673_H_downreg <- enricher(A673_20v3_downreg$ensemble.ID, TERM2GENE=hallmark_sets)
+
+CHLA10_H_upreg <- enricher(CHLA10_20v3_upreg$X, TERM2GENE=hallmark_sets)
+CHLA10_H_downreg <- enricher(CHLA10_20v3_downreg$X, TERM2GENE=hallmark_sets)
+
+A673_react_upreg <- enricher(A673_20v3_upreg$ensemble.ID, TERM2GENE=reactome_sets)
+CHLA10_react_upreg <- enricher(CHLA10_20v3_upreg$X, TERM2GENE=reactome_sets)
+
+
+```
+
+
+```{r}
+# define dotplot function
+
+dotplot_custom <- function(data, showCategory, custom_order = NULL, x_range = NULL, plot_width = 6, plot_height = 8) {
+  
+  # Convert data to DataFrame and subset
+  data_df <- as.data.frame(data)
+  n <- min(showCategory, nrow(data_df))
+  data_df <- data_df[1:n, ]
+  
+  # Transform data
+  data_df$log10_padj <- -log10(data_df$p.adjust)
+  data_df$GeneRatio <- sapply(data_df$GeneRatio, function(x) eval(parse(text = x)))
+  
+  # Apply custom order if provided
+  if (!is.null(custom_order)) {
+    data_df$Description <- factor(data_df$Description, levels = custom_order)
+  } else {
+    data_df$Description <- factor(data_df$Description, levels = data_df$Description[order(data_df$log10_padj)])
+  }
+  
+  # Create the plot
+  p <- ggplot(data = data_df, aes(x = log10_padj, y = Description,
+                                  color = Count, size = GeneRatio)) +
+    geom_point() +
+    scale_color_gradient(name = "Count", low = "red", high = "blue") +
+    scale_size_continuous(name = "GeneRatio", range = c(6, 8), breaks = pretty(data_df$GeneRatio, n = 3)) +
+    theme_bw() +
+    ylab("") +
+    xlab("-log10(p.adjust)") +
+    ggtitle("Enrichment analysis") +
+    expand_limits(x = 0, y = 0) +
+    theme(
+      # Adjust the aspect ratio of the plot area
+      aspect.ratio = plot_height / plot_width
+    )
+  
+  # Set x-axis range if provided
+  if (!is.null(x_range)) {
+    p <- p + scale_x_continuous(limits = x_range)
+  }
+  
+  return(p)
+}
+
+```
+
+
+```{r}
+dotplot_custom(CHLA10_H_upreg, showCategory = 5)
+dotplot_custom(A673_H_upreg, showCategory = 5)
+dotplot_custom(CHLA10_react_upreg, showCategory = 5) # manually set order
+dotplot_custom(A673_react_upreg, showCategory = 5)
+
+```
+
+

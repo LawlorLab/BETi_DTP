@@ -1,0 +1,187 @@
+---
+title: "supp3c"
+output: html_document
+# Written by Jonah Valenti, Emma Wrenn and Neerja Katiyar
+---
+
+```{r, message=FALSE}
+library(fgsea)
+library(data.table)
+library(ggplot2)
+library(clusterProfiler)
+library(msigdb)
+library(org.Hs.eg.db)
+library(magrittr)
+library(dplyr)
+library(enrichplot)
+```
+
+
+## Read Neerja's DESEQ contrasts and re-format
+
+```{r}
+fpath1 <- ("../Contrasts_BETi/3Dv20D_contrasts/A673_20d_v_3d_results.csv")
+fpath2 <- ("../Contrasts_BETi/3Dv20D_contrasts/CHLA10_20d_v_3d_results.csv")
+
+A673_20v3days <- read.csv(fpath1, row.names=1)
+A673_20v3days -> A673_DE_20v3days
+A673_DE_20v3days$Gene <- rownames(A673_DE_20v3days)
+
+CHLA10_20v3days <- read.csv(fpath2, row.names=1)
+CHLA10_20v3days -> CHLA10_DE_20v3days
+CHLA10_DE_20v3days$Gene <- rownames(CHLA10_DE_20v3days)
+
+```
+
+
+```{r}
+# create dataframe with gene symbols, filter out missing data
+A673_DE_20v3days_mapped_df <- data.frame(
+  gene_symbol = mapIds(
+    # Replace with annotation package for the organism relevant to your data
+    org.Hs.eg.db,
+    keys = A673_DE_20v3days$Gene,
+    # Replace with the type of gene identifiers in your data
+    keytype = "ENSEMBL",
+    # Replace with the type of gene identifiers you would like to map to
+    column = "SYMBOL",
+    # This will keep only the first mapped value for each Ensembl ID
+    multiVals = "first"
+  )
+) %>%
+  # If an Ensembl gene identifier doesn't map to a gene symbol, drop that
+  # from the data frame
+  dplyr::filter(!is.na(gene_symbol)) %>%
+  # Make an `Ensembl` column to store the rownames
+  tibble::rownames_to_column("Ensembl") %>%
+  # Now let's join the rest of the expression data
+  dplyr::inner_join(A673_DE_20v3days, by = c("Ensembl" = "Gene"))
+
+# do the same thing for CHLA10
+CHLA10_DE_20v3days_mapped_df <- data.frame(
+  gene_symbol = mapIds(
+    org.Hs.eg.db,
+    keys = CHLA10_DE_20v3days$Gene,
+    keytype = "ENSEMBL",
+    column = "SYMBOL",
+    multiVals = "first")) %>%
+  dplyr::filter(!is.na(gene_symbol)) %>%
+  tibble::rownames_to_column("Ensembl") %>%
+  dplyr::inner_join(CHLA10_DE_20v3days, by = c("Ensembl" = "Gene"))
+
+```
+
+
+```{r}
+# remove duplicated gene symbols, keep the data point with higher l2fc
+A673_DE_20v3days_mapped_df <- A673_DE_20v3days_mapped_df %>%
+  dplyr::arrange(dplyr::desc(abs(log2FoldChange))) %>%
+  dplyr::distinct(gene_symbol, .keep_all = TRUE)
+
+CHLA10_DE_20v3days_mapped_df <- CHLA10_DE_20v3days_mapped_df %>%
+  dplyr::arrange(dplyr::desc(abs(log2FoldChange))) %>%
+  dplyr::distinct(gene_symbol, .keep_all = TRUE)
+
+```
+
+
+```{r}
+# Save l2fc (expression change) values to separate objects used for downstream analysis
+A673_lfc_vector <- A673_DE_20v3days_mapped_df$log2FoldChange
+names(A673_lfc_vector) <- A673_DE_20v3days_mapped_df$gene_symbol
+
+CHLA10_lfc_vector <- CHLA10_DE_20v3days_mapped_df$log2FoldChange
+names(CHLA10_lfc_vector) <- CHLA10_DE_20v3days_mapped_df$gene_symbol
+
+# We need to sort the log2 fold change values in descending order here
+A673_genelist <- sort(A673_lfc_vector, decreasing = TRUE)
+CHLA10_genelist <- sort(CHLA10_lfc_vector, decreasing = TRUE)
+
+```
+
+## EWS::FLI1 gene sets
+
+```{r}
+read.gmt = function(file){  if(!grepl("\\.gmt$",file)[1]){stop("Pathway information must be a .gmt file")}
+geneSetDB = readLines(file) ##read in the gmt file as a vector of lines
+geneSetDB = strsplit(geneSetDB,"\t") ##convert from vector of strings to a list
+names(geneSetDB) = sapply(geneSetDB,"[",1) ##move the names column as the names of the list
+geneSetDB = lapply(geneSetDB, "[",-1) ##remove name and description columns
+geneSetDB = lapply(geneSetDB, function(x){x[which(x!="")]}) ##remove empty strings  
+return(geneSetDB)}
+
+EWS_FLI1_file <- read.gmt("/data/hps/assoc/private/ewing_beti/user/jvale8/toolbelt/EWS_FLI1_genesets_gmt.gmt")
+
+EWS_FLI1_df <- do.call(rbind, lapply(EWS_FLI1_file, data.frame))
+names(EWS_FLI1_df) <- "gene_name"
+EWS_FLI1_df$Pathways <- gsub("\\..*","",rownames(EWS_FLI1_df))
+#EWS_FLI1_df$gene_name <- EWS_FLI1_df$gene_name
+EWS_FLI1_df_new <- data.frame(EWS_FLI1_df$Pathways, EWS_FLI1_df$gene_name)
+
+names(EWS_FLI1_df_new) <- c("Pathways", "gene_name")
+EWS_FLI1_df_new_tibble <- as_tibble(EWS_FLI1_df_new)
+
+up_tibble <- EWS_FLI1_df_new_tibble %>% filter(Pathways == "Kinsey_UP" | Pathways == "Riggi_UP" | Pathways == "Hancock_Lessnick_UP")
+
+```
+
+
+
+```{r, message=FALSE}
+# run GSEA for EWS::FLI1 upregulated sets and EWS::FLI1 downregulated sets, for each cell line
+
+# increase nPermSimple for small/large datasets to increase number of random tests used to calculate p-values, up_tibble contains kinsey_up, a gene set with over 1000 genes
+
+fusion_upreg_CHLA10_20v3days <- GSEA(CHLA10_genelist, TERM2GENE=up_tibble, pvalueCutoff = 1.1, maxGSSize = 4000, nPermSimple = 1000000) 
+fusion_upreg_A673_20v3days <- GSEA(A673_genelist, TERM2GENE=up_tibble, pvalueCutoff = 1.1, maxGSSize = 4000, nPermSimple = 1000000) 
+
+```
+
+
+```{r}
+# custom dotplot function
+dotplot_custom <- function(data, showCategory, x_range = NULL, plot_width = 10, plot_height = 5) {
+  
+  # Convert data to DataFrame and subset
+  data_df <- as.data.frame(data)
+  n <- min(showCategory, nrow(data_df))
+  data_df <- data_df[1:n, ]
+  
+  # Transform data
+  data_df$log10_padj <- -log10(data_df$p.adjust)
+  data_df$Count <- sapply(data_df$core_enrichment, function(x) {
+    length(strsplit(x, "/")[[1]])
+  })
+
+  # Create the plot
+  p <- data_df %>%
+    ggplot( aes(x = NES, y = Description,
+                                  color = p.adjust, size = Count)) +
+    geom_point() +
+    scale_color_gradient(name = "p.adjust", low = "red", high = "blue", breaks = c(0, 0.1, 0.25, 1), limits = c(0,1)) +
+    scale_size_continuous(name = "Count", range = c(4, 8), breaks = pretty(data_df$Count, n = 3)) +
+    theme_bw() +
+    ylab("") +
+    xlab("NES") +
+    expand_limits(x = c(-3, 3), y = 0) +
+    theme(
+      # Adjust the aspect ratio of the plot area
+      aspect.ratio = plot_height / plot_width
+    )
+  
+  # Set x-axis range if provided
+  if (!is.null(x_range)) {
+    p <- p + scale_x_continuous(limits = x_range)
+  }
+  
+  return(p)
+}
+
+```
+
+
+```{r}
+dotplot_custom(fusion_upreg_CHLA10_20v3days, showCategory = 3) + ggtitle("CHLA10 up sets") # supp 3c
+dotplot_custom(fusion_upreg_A673_20v3days, showCategory = 3) + ggtitle("A673 up sets") # supp 3c
+
+```

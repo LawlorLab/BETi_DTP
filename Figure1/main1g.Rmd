@@ -1,0 +1,115 @@
+---
+title: "main1g"
+output: html_document
+# Written by Neerja Katiyar, edited by Jonah Valenti
+---
+
+
+```{r, message=FALSE}
+library(dplyr)
+library(tidyverse)
+library(ggVennDiagram)
+library(ggplot2)
+library(msigdbr)
+library(clusterProfiler)
+```
+
+
+```{r}
+# Read the DE results.
+A673_DE_3days <- read.csv("/data/hps/assoc/private/ewing_beti/user/jvale8/shireen_stuff/Code_paper_Shireen/Figure2/tables/A673_condition_treated_results.csv", row.names=1)
+CHLA10_DE_3days <- read.csv("/data/hps/assoc/private/ewing_beti/user/jvale8/shireen_stuff/Code_paper_Shireen/Figure2/tables/CHLA10_condition_treated_results.csv",row.names=1)
+TC32_DE_3days <- read.csv("/data/hps/assoc/private/ewing_beti/user/jvale8/shireen_stuff/Code_paper_Shireen/Figure2/tables/TC32_condition_treated_results.csv",row.names=1)
+
+
+```
+
+
+```{r}
+# Filter the DE results.
+A673_DE_3days_upreg <- A673_DE_3days %>% filter(log2FoldChange > 0, padj < 0.05)
+CHLA10_DE_3days_upreg <- CHLA10_DE_3days %>% filter(log2FoldChange > 0, padj < 0.05)
+TC32_DE_3days_upreg <- TC32_DE_3days %>% filter(log2FoldChange > 0, padj < 0.05)
+
+```
+
+
+```{r}
+upreg <- list(A673 = rownames(A673_DE_3days_upreg), CHLA10 = rownames(CHLA10_DE_3days_upreg), TC32 = rownames(TC32_DE_3days_upreg))
+
+A673_upreg = rownames(A673_DE_3days_upreg)
+CHLA10_upreg = rownames(CHLA10_DE_3days_upreg)
+TC32_upreg = rownames(TC32_DE_3days_upreg)
+
+upreg_intersect_genes <- intersect(intersect(A673_upreg, CHLA10_upreg),TC32_upreg)
+
+```
+
+
+```{r}
+# Code for custom dotplot.
+dotplot_custom <- function(data, showCategory, custom_order = NULL, x_range = NULL, plot_width = 5, plot_height = 10) {
+  
+  # Convert data to DataFrame and subset
+  data_df <- as.data.frame(data)
+  n <- min(showCategory, nrow(data_df))
+  data_df <- data_df[1:n, ]
+  
+  # Transform data
+  data_df$log10_padj <- -log10(data_df$p.adjust)
+  data_df$GeneRatio <- sapply(data_df$GeneRatio, function(x) eval(parse(text = x)))
+  
+  # Apply custom order if provided
+  if (!is.null(custom_order)) {
+    data_df$Description <- factor(data_df$Description, levels = custom_order)
+  } else {
+    data_df$Description <- factor(data_df$Description, levels = data_df$Description[order(data_df$log10_padj)])
+  }
+  
+  # Create the plot
+  p <- ggplot(data = data_df, aes(x = log10_padj, y = Description,
+                                  color = Count, size = GeneRatio)) +
+    geom_point() +
+    scale_color_gradient(name = "Count", low = "red", high = "blue") +
+    scale_size_continuous(name = "GeneRatio", range = c(4, 8), breaks = pretty(data_df$GeneRatio, n = 3)) +
+    theme_bw() +
+    ylab("") +
+    xlab("-log10(p.adjust)") +
+    ggtitle("Enrichment analysis", deparse(substitute(data))) +
+    expand_limits(x = 0, y = 0) +
+    theme(
+      # Adjust the aspect ratio of the plot area
+      aspect.ratio = plot_height / plot_width
+    )
+  
+  # Set x-axis range if provided
+  if (!is.null(x_range)) {
+    p <- p + scale_x_continuous(limits = x_range)
+  }
+  
+  return(p)
+}
+
+```
+
+
+```{r}
+# Run enrichment analysis for hallmark genes.
+m_H_t2g <- msigdbr(species = "Homo sapiens", category = "H") %>% 
+  dplyr::select(gs_name, ensembl_gene)
+em_H_upreg <- enricher(upreg_intersect_genes, TERM2GENE=m_H_t2g)
+
+```
+
+
+```{r}
+order <- c("HALLMARK_PI3K_AKT_MTOR_SIGNALING", "HALLMARK_HEME_METABOLISM", "HALLMARK_MITOTIC_SPINDLE", "HALLMARK_P53_PATHWAY")
+# apply custom order to match output from standard dotplot function, shown below custom dotplot function
+dotplot_custom(em_H_upreg, showCategory=20, x_range = c(0, 3), custom_order = order) 
+# dotplot(em_H_upreg)
+
+```
+
+
+
+
